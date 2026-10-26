@@ -1,0 +1,60 @@
+name: Sleeper to Discord
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # transactions, every 15 minutes
+    - cron: "0 14 * * *"     # matchups, daily (14:00 UTC = about 8-9 AM Central)
+    - cron: "0 14 * * 1"     # standings, Mondays
+  workflow_dispatch:         # lets you run it by hand from the Actions tab
+    inputs:
+      command:
+        description: "transactions, matchups, or standings"
+        required: true
+        default: "standings"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sleeper
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Pick command
+        id: pick
+        run: |
+          CMD="${{ github.event.inputs.command }}"
+          if [ -z "$CMD" ]; then
+            case "${{ github.event.schedule }}" in
+              "*/15 * * * *") CMD=transactions ;;
+              "0 14 * * *")   CMD=matchups ;;
+              "0 14 * * 1")   CMD=standings ;;
+            esac
+          fi
+          echo "cmd=$CMD" >> "$GITHUB_OUTPUT"
+
+      - name: Run script
+        run: python sleeper_discord.py ${{ steps.pick.outputs.cmd }}
+        env:
+          SLEEPER_LEAGUE_ID: ${{ secrets.SLEEPER_LEAGUE_ID }}
+          WEBHOOK_TRANSACTIONS: ${{ secrets.WEBHOOK_TRANSACTIONS }}
+          WEBHOOK_MATCHUPS: ${{ secrets.WEBHOOK_MATCHUPS }}
+          WEBHOOK_STANDINGS: ${{ secrets.WEBHOOK_STANDINGS }}
+
+      - name: Save state
+        if: steps.pick.outputs.cmd == 'transactions'
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || (git commit -m "Update state" && git push)
